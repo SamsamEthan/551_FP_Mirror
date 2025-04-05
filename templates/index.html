@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Corporate Structures Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+    <style>
+        #map { height: 600px; width: 100%; margin-top: 20px; }
+        body { font-family: Arial, sans-serif; margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Find Nearest Washroom</h1>
+
+    <form method="get" action="/">
+        <label for="lat">Latitude:</label>
+        <input type="text" name="lat" id="lat" required>
+        <label for="lon">Longitude:</label>
+        <input type="text" name="lon" id="lon" required>
+        <button type="submit">Search</button>
+        <button type="button" onclick="useMyLocation()">Use My Location</button>
+    </form>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([51.05, -114.07], 11);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        const structures = {{ data | tojson }};
+        const userCoords = {{ user_coords | tojson }};
+        const nearest = {{ nearest | tojson }};
+
+        structures.forEach(structure => {
+            if (structure.centroid_lat && structure.centroid_lon) {
+                const marker = L.marker([structure.centroid_lat, structure.centroid_lon])
+                    .addTo(map)
+                    .bindPopup(`<strong>${structure.COMMON_NAME}</strong><br>${structure.BLD_ADDRESS}`);
+                if (nearest && structure.GLOBALID === nearest.GLOBALID) {
+                    marker.setIcon(L.icon({
+                        iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 32],
+                        popupAnchor: [0, -32]
+                    }));
+                }
+            }
+        });
+
+        if (userCoords[0] && userCoords[1]) {
+            L.marker(userCoords, { title: "Your Location" })
+                .addTo(map)
+                .bindPopup("You are here")
+                .openPopup();
+            map.setView(userCoords, 13);
+        }
+
+        function useMyLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const lat = position.coords.latitude.toFixed(6);
+                    const lon = position.coords.longitude.toFixed(6);
+                    window.location.href = `/?lat=${lat}&lon=${lon}`;
+                }, () => {
+                    alert("Location access denied.");
+                });
+            } else {
+                alert("Geolocation is not supported by this browser.");
+            }
+        }
+    </script>
+</body>
+</html>
