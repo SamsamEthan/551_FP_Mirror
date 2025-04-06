@@ -1,87 +1,130 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Nearest Washroom Finder</title>
+    <title>Public Washrooms Map</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet & clustering CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <style>
-        #map { height: 600px; width: 100%; margin-top: 20px; }
-        body { font-family: Arial, sans-serif; margin: 20px; }
+        #map { height: 90vh; width: 100%; margin-top: 20px; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
     </style>
 </head>
 <body>
-    <h1>Find Nearest Washroom</h1>
-
-    <form method="get" action="/">
-        <label for="lat">Latitude:</label>
-        <input type="text" name="lat" id="lat" required>
-        <label for="lon">Longitude:</label>
-        <input type="text" name="lon" id="lon" required>
-        <button type="submit">Search</button>
-        <button type="button" onclick="useMyLocation()">Use My Location</button>
-    </form>
-
+    <h1>Public Washrooms in Calgary</h1>
     <div id="map"></div>
 
+    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
     <script>
+        const structures = {{ data | tojson | safe }};
         const map = L.map('map').setView([51.05, -114.07], 11);
+        const markers = L.markerClusterGroup();
+        const washroomMarkers = {};
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        const structures = {{ data | tojson }};
-        const userCoords = {{ user_coords | tojson }};
-        const nearest = {{ nearest | tojson }};
-
-        structures.forEach(structure => {
-            const lat = parseFloat(structure.centroid_lat);
-            const lon = parseFloat(structure.centroid_lon);
-            const isNearest = nearest && structure.GLOBALID === nearest.GLOBALID;
-
-            if (!isNaN(lat) && !isNaN(lon)) {
-                const marker = L.marker([lat, lon], {
-                    icon: isNearest ? L.icon({
-                        iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
-                        iconSize: [32, 32],
-                        iconAnchor: [16, 32],
-                        popupAnchor: [0, -32]
-                    }) : undefined
-                }).addTo(map);
-
-                marker.bindPopup(`
-                    <strong>${structure.COMMON_NAME}</strong><br>
-                    ${structure.BLD_ADDRESS || "No Address"}
-                    ${isNearest ? `<br><b>🚻 Closest to you (${parseFloat(nearest.distance_km).toFixed(2)} km)</b>` : ""}
-                `);
-            }
-        });
-
-        if (userCoords[0] && userCoords[1]) {
-            const userLat = parseFloat(userCoords[0]);
-            const userLon = parseFloat(userCoords[1]);
-
-            if (!isNaN(userLat) && !isNaN(userLon)) {
-                L.marker([userLat, userLon], { title: "Your Location" })
-                    .addTo(map)
-                    .bindPopup("📍 You are here")
-                    .openPopup();
-
-                map.setView([userLat, userLon], 13);
+        // Helper function to get preferred address
+        function getBestAddress(structure) {
+            if (structure.BLD_ADDRESS && structure.BLD_ADDRESS.trim() !== "") {
+                return structure.BLD_ADDRESS;
+            } else if (structure.PARCEL_ADDRESS && structure.PARCEL_ADDRESS.trim() !== "") {
+                return structure.PARCEL_ADDRESS;
+            } else {
+                return "No address";
             }
         }
 
-        function useMyLocation() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(position => {
-                    const lat = position.coords.latitude.toFixed(6);
-                    const lon = position.coords.longitude.toFixed(6);
-                    window.location.href = `/?lat=${lat}&lon=${lon}`;
-                }, () => {
-                    alert("Location access denied.");
+        // Add clustered washroom markers
+        structures.forEach(structure => {
+            const lat = parseFloat(structure.centroid_lat);
+            const lon = parseFloat(structure.centroid_lon);
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const markerId = `washroom-${lat.toFixed(6)}-${lon.toFixed(6)}`;
+                const marker = L.marker([lat, lon])
+                    .bindPopup(`<strong>${structure.COMMON_NAME}</strong><br>${getBestAddress(structure)}`);
+                washroomMarkers[markerId] = marker;
+                markers.addLayer(marker);
+            }
+        });
+
+        map.addLayer(markers);
+
+        // Locate user and show nearest washroom info
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(position => {
+                const userLat = position.coords.latitude;
+                const userLon = position.coords.longitude;
+
+                const userMarker = L.marker([userLat, userLon], {
+                    title: "Your Location",
+                    icon: L.icon({
+                        iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 32],
+                        popupAnchor: [0, -32]
+                    })
+                }).addTo(map);
+
+                map.setView([userLat, userLon], 13);
+
+                let nearest = null;
+                let minDist = Infinity;
+                let markerKey = null;
+
+                structures.forEach(structure => {
+                    const lat = parseFloat(structure.centroid_lat);
+                    const lon = parseFloat(structure.centroid_lon);
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        const dist = getDistance(userLat, userLon, lat, lon);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = structure;
+                            markerKey = `washroom-${lat.toFixed(6)}-${lon.toFixed(6)}`;
+                        }
+                    }
                 });
-            } else {
-                alert("Geolocation is not supported by this browser.");
+
+                if (nearest && markerKey && washroomMarkers[markerKey]) {
+                    const distMeters = (minDist * 1000).toFixed(0);
+                    const address = getBestAddress(nearest);
+
+                    userMarker.bindPopup(`
+                        <strong>Closest Washroom</strong><br>
+                        <a href="#" onclick="goToWashroom('${markerKey}'); return false;">Go to closest washroom</a><br>
+                        ${nearest.COMMON_NAME || "Unnamed"}<br>
+                        ${address}<br>
+                        Distance: ${distMeters} meters
+                    `).openPopup();
+                }
+            }, () => {
+                alert("Location access denied.");
+            });
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function goToWashroom(markerId) {
+            const marker = washroomMarkers[markerId];
+            if (marker) {
+                map.setView(marker.getLatLng(), 17);
+                marker.openPopup();
             }
         }
     </script>
