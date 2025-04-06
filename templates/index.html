@@ -3,22 +3,25 @@
 <head>
     <title>Public Washrooms Map</title>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 
-    <!-- Leaflet & clustering CSS -->
+    <!-- Leaflet & MarkerCluster CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-    <style>
-        #map { height: 90vh; width: 100%; margin-top: 20px; }
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-    </style>
+
+    <!-- Your custom styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-    <h1>Public Washrooms in Calgary</h1>
+    <div id="header">
+        <h2>Public Washrooms in Calgary</h2>
+        <button id="locate-btn" onclick="locateUser()">📍 Use My Location</button>
+    </div>
+
     <div id="map"></div>
 
-    <!-- Leaflet JS -->
+    <!-- Leaflet JS & Clustering -->
     <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
@@ -32,25 +35,20 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Helper function to get preferred address
-        function getBestAddress(structure) {
-            if (structure.BLD_ADDRESS && structure.BLD_ADDRESS.trim() !== "") {
-                return structure.BLD_ADDRESS;
-            } else if (structure.PARCEL_ADDRESS && structure.PARCEL_ADDRESS.trim() !== "") {
-                return structure.PARCEL_ADDRESS;
-            } else {
-                return "No address";
-            }
+        function getBestAddress(entry) {
+            if (entry.BLD_ADDRESS?.trim()) return entry.BLD_ADDRESS;
+            if (entry.PARCEL_ADDRESS?.trim()) return entry.PARCEL_ADDRESS;
+            return "No address";
         }
 
-        // Add clustered washroom markers
-        structures.forEach(structure => {
-            const lat = parseFloat(structure.centroid_lat);
-            const lon = parseFloat(structure.centroid_lon);
+        // Add clustered washroom markers to the map
+        structures.forEach(entry => {
+            const lat = parseFloat(entry.centroid_lat);
+            const lon = parseFloat(entry.centroid_lon);
             if (!isNaN(lat) && !isNaN(lon)) {
                 const markerId = `washroom-${lat.toFixed(6)}-${lon.toFixed(6)}`;
                 const marker = L.marker([lat, lon])
-                    .bindPopup(`<strong>${structure.COMMON_NAME}</strong><br>${getBestAddress(structure)}`);
+                    .bindPopup(`<strong>${entry.COMMON_NAME}</strong><br>${getBestAddress(entry)}`);
                 washroomMarkers[markerId] = marker;
                 markers.addLayer(marker);
             }
@@ -58,8 +56,12 @@
 
         map.addLayer(markers);
 
-        // Locate user and show nearest washroom info
-        if (navigator.geolocation) {
+        function locateUser() {
+            if (!navigator.geolocation) {
+                alert("Geolocation not supported.");
+                return;
+            }
+
             navigator.geolocation.getCurrentPosition(position => {
                 const userLat = position.coords.latitude;
                 const userLon = position.coords.longitude;
@@ -76,41 +78,49 @@
 
                 map.setView([userLat, userLon], 13);
 
-                let nearest = null;
-                let minDist = Infinity;
-                let markerKey = null;
-
-                structures.forEach(structure => {
-                    const lat = parseFloat(structure.centroid_lat);
-                    const lon = parseFloat(structure.centroid_lon);
+                // Find 3 closest washrooms
+                const distances = structures.map(entry => {
+                    const lat = parseFloat(entry.centroid_lat);
+                    const lon = parseFloat(entry.centroid_lon);
                     if (!isNaN(lat) && !isNaN(lon)) {
-                        const dist = getDistance(userLat, userLon, lat, lon);
-                        if (dist < minDist) {
-                            minDist = dist;
-                            nearest = structure;
-                            markerKey = `washroom-${lat.toFixed(6)}-${lon.toFixed(6)}`;
-                        }
+                        return {
+                            ...entry,
+                            distance: getDistanceInKm(userLat, userLon, lat, lon),
+                            lat,
+                            lon
+                        };
                     }
+                    return null;
+                }).filter(Boolean);
+
+                const nearestThree = distances.sort((a, b) => a.distance - b.distance).slice(0, 3);
+
+                let popupHtml = `<strong>3 Nearest Washrooms</strong><br><ul style="padding-left: 16px;">`;
+
+                nearestThree.forEach(place => {
+                    const dist = place.distance.toFixed(2);
+                    const address = getBestAddress(place);
+                    const markerId = `washroom-${place.lat.toFixed(6)}-${place.lon.toFixed(6)}`;
+                    popupHtml += `
+                        <li>
+                            <a href="#" onclick="goToWashroom('${markerId}'); return false;">
+                                ${place.COMMON_NAME || "Unnamed"}
+                            </a><br>
+                            ${address}<br>
+                            Distance: ${dist} km
+                        </li><br>
+                    `;
                 });
 
-                if (nearest && markerKey && washroomMarkers[markerKey]) {
-                    const distMeters = (minDist * 1000).toFixed(0);
-                    const address = getBestAddress(nearest);
+                popupHtml += `</ul>`;
+                userMarker.bindPopup(popupHtml).openPopup();
 
-                    userMarker.bindPopup(`
-                        <strong>Closest Washroom</strong><br>
-                        <a href="#" onclick="goToWashroom('${markerKey}'); return false;">Go to closest washroom</a><br>
-                        ${nearest.COMMON_NAME || "Unnamed"}<br>
-                        ${address}<br>
-                        Distance: ${distMeters} meters
-                    `).openPopup();
-                }
             }, () => {
-                alert("Location access denied.");
+                alert("Unable to retrieve your location.");
             });
         }
 
-        function getDistance(lat1, lon1, lat2, lon2) {
+        function getDistanceInKm(lat1, lon1, lat2, lon2) {
             const R = 6371;
             const dLat = (lat2 - lat1) * Math.PI / 180;
             const dLon = (lon2 - lon1) * Math.PI / 180;
