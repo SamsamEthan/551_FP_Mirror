@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Corporate Structures Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"/>
+    <title>Nearest Washroom Finder</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
     <style>
         #map { height: 600px; width: 100%; margin-top: 20px; }
         body { font-family: Arial, sans-serif; margin: 20px; }
@@ -35,27 +35,40 @@
         const nearest = {{ nearest | tojson }};
 
         structures.forEach(structure => {
-            if (structure.centroid_lat && structure.centroid_lon) {
-                const marker = L.marker([structure.centroid_lat, structure.centroid_lon])
-                    .addTo(map)
-                    .bindPopup(`<strong>${structure.COMMON_NAME}</strong><br>${structure.BLD_ADDRESS}`);
-                if (nearest && structure.GLOBALID === nearest.GLOBALID) {
-                    marker.setIcon(L.icon({
+            const lat = parseFloat(structure.centroid_lat);
+            const lon = parseFloat(structure.centroid_lon);
+            const isNearest = nearest && structure.GLOBALID === nearest.GLOBALID;
+
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const marker = L.marker([lat, lon], {
+                    icon: isNearest ? L.icon({
                         iconUrl: "https://maps.google.com/mapfiles/ms/icons/red-dot.png",
                         iconSize: [32, 32],
                         iconAnchor: [16, 32],
                         popupAnchor: [0, -32]
-                    }));
-                }
+                    }) : undefined
+                }).addTo(map);
+
+                marker.bindPopup(`
+                    <strong>${structure.COMMON_NAME}</strong><br>
+                    ${structure.BLD_ADDRESS || "No Address"}
+                    ${isNearest ? `<br><b>🚻 Closest to you (${parseFloat(nearest.distance_km).toFixed(2)} km)</b>` : ""}
+                `);
             }
         });
 
         if (userCoords[0] && userCoords[1]) {
-            L.marker(userCoords, { title: "Your Location" })
-                .addTo(map)
-                .bindPopup("You are here")
-                .openPopup();
-            map.setView(userCoords, 13);
+            const userLat = parseFloat(userCoords[0]);
+            const userLon = parseFloat(userCoords[1]);
+
+            if (!isNaN(userLat) && !isNaN(userLon)) {
+                L.marker([userLat, userLon], { title: "Your Location" })
+                    .addTo(map)
+                    .bindPopup("📍 You are here")
+                    .openPopup();
+
+                map.setView([userLat, userLon], 13);
+            }
         }
 
         function useMyLocation() {
