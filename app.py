@@ -49,11 +49,16 @@ def index():
     lon = request.args.get("lon", type=float)
 
     conn = sqlite3.connect(DB_FILE)
-    df = pd.read_sql_query("SELECT * FROM structures WHERE centroid_lat IS NOT NULL AND centroid_lon IS NOT NULL", conn)
+    df = pd.read_sql_query("""
+        SELECT * FROM structures
+        WHERE centroid_lat IS NOT NULL
+          AND centroid_lon IS NOT NULL
+          AND STRUCTURE_TYPE = 'WASHROOM'
+    """, conn)
     conn.close()
 
     nearest = None
-    if lat is not None and lon is not None:
+    if lat is not None and lon is not None and not df.empty:
         df["distance_km"] = df.apply(
             lambda row: haversine(lat, lon, row["centroid_lat"], row["centroid_lon"]), axis=1)
         nearest = df.loc[df["distance_km"].idxmin()].to_dict()
